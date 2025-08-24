@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Transcript Analyzer",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/../langgraph_env/bin/python",
+            "env": {
+                "GOOGLE_API_KEY": "AIzaSyCgHtF9UJJCbJYEh3LgxY14sDDnIHPdKAc"
+            }
+        },
+        {
+            "name": "Test Transcript Tools",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/test_transcript_analyzer.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/../langgraph_env/bin/python",
+            "env": {
+                "GOOGLE_API_KEY": "AIzaSyCgHtF9UJJCbJYEh3LgxY14sDDnIHPdKAc"
+            }
+        }
+    ]
+}

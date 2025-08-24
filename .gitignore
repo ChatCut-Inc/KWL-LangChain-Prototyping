@@ -1,0 +1,27 @@
+# Environment variables with API keys
+.env
+
+# Virtual environments
+venv/
+env/
+langgraph_env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE files
+.vscode/settings.json
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
