@@ -5,6 +5,7 @@ Video Transcript Analyzer - With visible tool calls like Lovable
 
 import os
 import time
+import asyncio
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
@@ -27,7 +28,7 @@ def read_transcript(filename: str, start_time: float = None, end_time: float = N
     print(f"🗂️ read_transcript({filename})")  # Show tool call like Lovable
     return read_func(filename, start_time, end_time)
 
-def main():
+async def main():
     print("🎬 Video Transcript Analyzer (Verbose Mode + Monitoring)")
     print("=" * 50)
     
@@ -93,21 +94,44 @@ def main():
             print()  # Add space before tool calls
             start_time = time.time()
             
-            response = agent.invoke({
+            # Stream the response
+            full_response = ""
+            query_tokens = 0
+            response_started = False
+            
+            async for event in agent.astream({
                 "messages": [{"role": "user", "content": user_input}]
-            }, config=thread_config)
+            }, config=thread_config):
+                
+                # Handle different event types - LangGraph sends dict events by default
+                if isinstance(event, dict):
+                    # Look for agent messages in the event
+                    if 'agent' in event and 'messages' in event['agent']:
+                        messages = event['agent']['messages']
+                        if messages:
+                            latest_msg = messages[-1]
+                            if hasattr(latest_msg, 'content') and latest_msg.content:
+                                if not response_started:
+                                    print("🤖 Agent: ", end="", flush=True)
+                                    response_started = True
+                                
+                                # For now, show the complete response (streaming may not work with Gemini)
+                                new_content = latest_msg.content
+                                if new_content != full_response:
+                                    # Print only the new part
+                                    new_chars = new_content[len(full_response):]
+                                    print(new_chars, end="", flush=True)
+                                    full_response = new_content
+                                
+                                # Extract token usage if available
+                                if hasattr(latest_msg, 'usage_metadata'):
+                                    usage = latest_msg.usage_metadata
+                                    query_tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
             
             # Calculate metrics
             end_time = time.time()
             response_time = end_time - start_time
             query_count += 1
-            
-            # Extract token usage if available
-            query_tokens = 0
-            response_msg = response['messages'][-1]
-            if hasattr(response_msg, 'usage_metadata'):
-                usage = response_msg.usage_metadata
-                query_tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
             
             # Estimate cost (Gemini 1.5 Flash pricing: ~$0.075/$1M input, ~$0.30/$1M output)
             # Rough estimate: $0.15/$1M tokens average
@@ -115,14 +139,12 @@ def main():
             total_tokens += query_tokens
             total_cost += query_cost
             
-            print(f"\n🤖 Agent: {response_msg.content}")
-            
             # Show metrics
-            print(f"\n📊 Tokens: {query_tokens:,} | Cost: ~${query_cost:.4f} | Time: {response_time:.1f}s")
+            print(f"\n\n📊 Tokens: {query_tokens:,} | Cost: ~${query_cost:.4f} | Time: {response_time:.1f}s")
             print(f"💰 Session Total: ${total_cost:.4f} ({query_count} queries)\n")
         
         except Exception as e:
             print(f"❌ Error: {e}\n")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

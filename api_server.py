@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""
+FastAPI Server for Transcript Analysis
+Bridges ChatCut video editor with LangGraph transcript analysis agent
+"""
+
+import os
+import time
+import asyncio
+from typing import Dict, Any
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Import your existing LangGraph setup
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
+from langchain.tools import tool
+from tools.transcript_tools import list_transcripts as list_func, read_transcript as read_func
+
+load_dotenv()
+
+# Wrap functions as proper LangChain tools (same as main_verbose.py)
+@tool
+def list_transcripts() -> str:
+    """List all available transcript files with metadata. Use when user asks what transcripts are available."""
+    print("🗂️ list_transcripts")  # Show tool call like Lovable
+    return list_func()
+
+@tool  
+def read_transcript(filename: str, start_time: float = None, end_time: float = None) -> str:
+    """Read specific transcript file content. Use when user asks about transcript content or wants to know what someone said."""
+    print(f"🗂️ read_transcript({filename})")  # Show tool call like Lovable
+    return read_func(filename, start_time, end_time)
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Transcript Analysis API", 
+    description="LangGraph agent for analyzing video transcripts",
+    version="1.0.0"
+)
+
+# Enable CORS for ChatCut frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:8080"],  # Added port 8080 for ChatCut
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Request/Response models
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    text: str
+    status: str
+    tokens: int = 0
+    cost: float = 0.0
+    tool_calls: list = []  # Track tool calls for UI display
+
+# Global agent (initialized on startup)
+agent = None
+memory = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the LangGraph agent on server startup"""
+    global agent, memory
+    
+    print("🎬 Starting Transcript Analysis API Server")
+    print("=" * 50)
+    
+    # Setup Gemini model (same as main_verbose.py)
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY not found in environment variables")
+    
+    model = ChatGoogleGenerativeAI(
+        model="gemini-1.5-flash",
+        google_api_key=api_key,
+        temperature=0.1  # Very low temperature for consistent tool usage
+    )
+    
+    tools = [list_transcripts, read_transcript]
+    memory = MemorySaver()
+    
+    agent = create_react_agent(
+        model=model,
+        tools=tools,
+        checkpointer=memory
+    )
+    
+    print("🧠 Agent ready! Available endpoints:")
+    print("📡 POST /chat - Send messages for transcript analysis") 
+    print("📋 GET /transcripts - List available transcripts")
+    print(f"📊 LangSmith Project: {os.getenv('LANGSMITH_PROJECT', 'transcript-analyzer')}")
+    print(f"🔗 View traces at: https://smith.langchain.com/")
+    print("🎯 Ready to serve ChatCut video editor!")
+
+@app.post("/chat", response_model=ChatResponse)
+async def analyze_transcript(request: ChatRequest) -> ChatResponse:
+    """
+    Main endpoint for transcript analysis
+    Receives user message and returns LangGraph agent response
+    """
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    
+    try:
+        print(f"\n💬 Received: {request.message}")
+        start_time = time.time()
+        
+        # Use unique thread for web sessions 
+        thread_config = {"configurable": {"thread_id": f"web-session-{int(time.time())}"}}
+        
+        # Stream the response from your LangGraph agent
+        full_response = ""
+        total_tokens = 0
+        tool_calls = []
+        
+        async for event in agent.astream({
+            "messages": [{"role": "user", "content": request.message}]
+        }, config=thread_config):
+            
+            # Handle LangGraph event structure (same logic as main_verbose.py)
+            if isinstance(event, dict):
+                # Capture tool calls
+                if 'tools' in event and 'messages' in event['tools']:
+                    for tool_msg in event['tools']['messages']:
+                        if hasattr(tool_msg, 'name'):
+                            tool_call_info = f"🗂️ {tool_msg.name}"
+                            if hasattr(tool_msg, 'args') and tool_msg.args:
+                                # Add first argument (usually filename)
+                                first_arg = next(iter(tool_msg.args.values())) if tool_msg.args else ""
+                                if first_arg:
+                                    tool_call_info += f"({first_arg})"
+                            tool_calls.append(tool_call_info)
+                            print(tool_call_info)  # Still show in terminal
+                
+                if 'agent' in event and 'messages' in event['agent']:
+                    messages = event['agent']['messages']
+                    if messages:
+                        latest_msg = messages[-1]
+                        if hasattr(latest_msg, 'content') and latest_msg.content:
+                            full_response = latest_msg.content
+                            
+                            # Extract token usage if available
+                            if hasattr(latest_msg, 'usage_metadata'):
+                                usage = latest_msg.usage_metadata
+                                total_tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
+        
+        # Calculate metrics
+        end_time = time.time()
+        response_time = end_time - start_time
+        
+        # Estimate cost (Gemini 1.5 Flash pricing)
+        estimated_cost = (total_tokens / 1_000_000) * 0.15
+        
+        print(f"📊 Response: {len(full_response)} chars | {total_tokens:,} tokens | {response_time:.1f}s | ${estimated_cost:.4f}")
+        
+        return ChatResponse(
+            text=full_response or "I apologize, but I couldn't generate a response. Please try again.",
+            status="success",
+            tokens=total_tokens,
+            cost=estimated_cost,
+            tool_calls=tool_calls
+        )
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+@app.get("/transcripts")
+async def get_available_transcripts() -> Dict[str, Any]:
+    """
+    Optional endpoint to let ChatCut know what transcripts are available
+    """
+    try:
+        transcript_list = list_func()
+        return {
+            "transcripts": transcript_list,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list transcripts: {str(e)}")
+
+@app.get("/health")
+async def health_check() -> Dict[str, str]:
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "transcript-analysis-api"}
+
+@app.get("/")
+async def root() -> Dict[str, str]:
+    """Root endpoint with API information"""
+    return {
+        "message": "Transcript Analysis API",
+        "description": "LangGraph agent for analyzing video transcripts",
+        "endpoints": {
+            "POST /chat": "Analyze transcripts with natural language",
+            "GET /transcripts": "List available transcript files", 
+            "GET /health": "Service health check"
+        }
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "api_server:app", 
+        host="0.0.0.0", 
+        port=9000, 
+        reload=True,
+        log_level="info"
+    )
