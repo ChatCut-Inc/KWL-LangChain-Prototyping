@@ -44,9 +44,10 @@ async def main():
         raise ValueError("GOOGLE_API_KEY not found in environment variables")
     
     model = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash",
         google_api_key=api_key,
-        temperature=0.1  # Very low temperature for consistent tool usage
+        temperature=1.0,  # Google's 2025 recommendation for better reasoning
+        max_retries=2     # Add retry logic for better reliability
     )
     
     tools = [list_transcripts, read_transcript]

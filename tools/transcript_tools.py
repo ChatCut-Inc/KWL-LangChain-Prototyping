@@ -28,12 +28,65 @@ def list_transcripts() -> str:
     return result.strip()
 
 def read_transcript(filename: str, start_time: Optional[float] = None, end_time: Optional[float] = None) -> str:
-    """Read and analyze the content of a specific transcript file. Can filter by time range (start_time, end_time in seconds). Returns formatted conversation with speakers and timestamps."""
+    """Read transcript content by name or topic. Automatically finds matching files using smart search. Use when user asks about any transcript content (e.g., 'chuck', 'gang reporter', 'pharma', or exact filenames)."""
     transcript_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'transcripts')
     file_path = os.path.join(transcript_dir, filename)
     
+    # If exact filename doesn't exist, try smart matching
     if not os.path.exists(file_path):
-        return f"Transcript file '{filename}' not found. Use list_transcripts() to see available files."
+        # Get list of available transcripts for smart matching
+        json_files = glob.glob(os.path.join(transcript_dir, '*.json'))
+        
+        if not json_files:
+            return "No transcript files found."
+            
+        # Smart matching logic
+        matched_file = None
+        filename_lower = filename.lower()
+        
+        # Try exact match first (case insensitive)
+        for file_path_candidate in json_files:
+            if filename_lower == os.path.basename(file_path_candidate).lower():
+                matched_file = file_path_candidate
+                break
+        
+        # Try partial matching on filename and content
+        if not matched_file:
+            best_match = None
+            best_score = 0
+            
+            for file_path_candidate in json_files:
+                basename = os.path.basename(file_path_candidate).lower()
+                
+                # Check if search term is in filename
+                score = 0
+                if filename_lower in basename:
+                    score += 10
+                
+                # Check specific keywords
+                if 'chuck' in filename_lower or 'palahniuk' in filename_lower:
+                    if 'chuck' in basename or 'palahniuk' in basename:
+                        score += 20
+                elif 'jesse' in filename_lower or 'katz' in filename_lower or 'gang' in filename_lower:
+                    if 'jesse' in basename or 'katz' in basename or 'gang' in basename:
+                        score += 20
+                elif 'ron' in filename_lower or 'piana' in filename_lower or 'pharma' in filename_lower or 'greed' in filename_lower:
+                    if 'ron' in basename or 'piana' in basename or 'pharma' in basename or 'greed' in basename:
+                        score += 20
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = file_path_candidate
+            
+            if best_match and best_score > 0:
+                matched_file = best_match
+        
+        if not matched_file:
+            # Show available options
+            available_files = [os.path.basename(f) for f in json_files]
+            return f"No transcript found matching '{filename}'. Available transcripts: {', '.join(available_files)}"
+        
+        file_path = matched_file
     
     try:
         with open(file_path, 'r') as f:

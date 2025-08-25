@@ -26,13 +26,23 @@ load_dotenv()
 @tool
 def list_transcripts() -> str:
     """List all available transcript files with metadata. Use when user asks what transcripts are available."""
-    print("🗂️ list_transcripts")  # Show tool call like Lovable
+    tool_call_display = "🗂️ list_transcripts"
+    print(tool_call_display)  # Show tool call like Lovable
+    # Store for UI display
+    if hasattr(list_transcripts, '_current_tool_calls'):
+        list_transcripts._current_tool_calls.append(tool_call_display)
     return list_func()
 
 @tool  
 def read_transcript(filename: str, start_time: float = None, end_time: float = None) -> str:
-    """Read specific transcript file content. Use when user asks about transcript content or wants to know what someone said."""
-    print(f"🗂️ read_transcript({filename})")  # Show tool call like Lovable
+    """Read transcript content by name or topic. Automatically finds matching files using smart search. Use when user asks about any transcript content (e.g., 'chuck', 'gang reporter', 'pharma', or exact filenames)."""
+    # Clean up filename for display
+    clean_name = filename.replace('.json', '').replace('_', ' ').replace('-', ' ')
+    tool_call_display = f"🗂️ read_transcript ({clean_name})"
+    print(f"🗂️ read_transcript({filename})")  # Show full filename in terminal
+    # Store for UI display
+    if hasattr(read_transcript, '_current_tool_calls'):
+        read_transcript._current_tool_calls.append(tool_call_display)
     return read_func(filename, start_time, end_time)
 
 # Initialize FastAPI app
@@ -80,9 +90,10 @@ async def startup_event():
         raise ValueError("GOOGLE_API_KEY not found in environment variables")
     
     model = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash",
         google_api_key=api_key,
-        temperature=0.1  # Very low temperature for consistent tool usage
+        temperature=1.0,  # Google's 2025 recommendation for better reasoning
+        max_retries=2     # Add retry logic for better reliability
     )
     
     tools = [list_transcripts, read_transcript]
@@ -114,13 +125,17 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         print(f"\n💬 Received: {request.message}")
         start_time = time.time()
         
-        # Use unique thread for web sessions 
-        thread_config = {"configurable": {"thread_id": f"web-session-{int(time.time())}"}}
+        # Use persistent thread for web sessions - maintains memory across requests
+        thread_config = {"configurable": {"thread_id": "chatcut-web-session"}}
         
         # Stream the response from your LangGraph agent
         full_response = ""
         total_tokens = 0
         tool_calls = []
+        
+        # Initialize tool call collection
+        list_transcripts._current_tool_calls = []
+        read_transcript._current_tool_calls = []
         
         async for event in agent.astream({
             "messages": [{"role": "user", "content": request.message}]
@@ -128,18 +143,8 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
             
             # Handle LangGraph event structure (same logic as main_verbose.py)
             if isinstance(event, dict):
-                # Capture tool calls
-                if 'tools' in event and 'messages' in event['tools']:
-                    for tool_msg in event['tools']['messages']:
-                        if hasattr(tool_msg, 'name'):
-                            tool_call_info = f"🗂️ {tool_msg.name}"
-                            if hasattr(tool_msg, 'args') and tool_msg.args:
-                                # Add first argument (usually filename)
-                                first_arg = next(iter(tool_msg.args.values())) if tool_msg.args else ""
-                                if first_arg:
-                                    tool_call_info += f"({first_arg})"
-                            tool_calls.append(tool_call_info)
-                            print(tool_call_info)  # Still show in terminal
+                # Collect tool calls from the functions for UI display
+                # (Tool calls are already printed in @tool decorators)
                 
                 if 'agent' in event and 'messages' in event['agent']:
                     messages = event['agent']['messages']
@@ -153,11 +158,16 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
                                 usage = latest_msg.usage_metadata
                                 total_tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
         
+        # Collect all tool calls from the functions
+        all_tool_calls = []
+        all_tool_calls.extend(list_transcripts._current_tool_calls)
+        all_tool_calls.extend(read_transcript._current_tool_calls)
+        
         # Calculate metrics
         end_time = time.time()
         response_time = end_time - start_time
         
-        # Estimate cost (Gemini 1.5 Flash pricing)
+        # Estimate cost (Gemini 2.0 Flash pricing)
         estimated_cost = (total_tokens / 1_000_000) * 0.15
         
         print(f"📊 Response: {len(full_response)} chars | {total_tokens:,} tokens | {response_time:.1f}s | ${estimated_cost:.4f}")
@@ -167,7 +177,7 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
             status="success",
             tokens=total_tokens,
             cost=estimated_cost,
-            tool_calls=tool_calls
+            tool_calls=all_tool_calls
         )
         
     except Exception as e:
