@@ -119,7 +119,7 @@ async def startup_event():
         raise ValueError("GOOGLE_API_KEY not found in environment variables")
     
     model = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash",
         google_api_key=api_key,
         temperature=1.0,  # Google's 2025 recommendation for better reasoning
         max_retries=2     # Add retry logic for better reliability
