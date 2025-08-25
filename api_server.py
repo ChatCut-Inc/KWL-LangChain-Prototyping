@@ -18,32 +18,49 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.tools import tool
-from tools.transcript_tools import list_transcripts as list_func, read_transcript as read_func
+from tools import browse_transcripts as browse_func, read_transcript_text as read_text_func, read_transcript_json as read_json_func
 
 load_dotenv()
 
 # Wrap functions as proper LangChain tools (same as main_verbose.py)
 @tool
-def list_transcripts() -> str:
-    """List all available transcript files with metadata. Use when user asks what transcripts are available."""
-    tool_call_display = "🗂️ list_transcripts"
+def browse_transcripts() -> str:
+    """List all available transcripts with metadata. Shows title, duration, and speakers 
+    for each transcript file."""
+    tool_call_display = "🗂️ browse_transcripts"
     print(tool_call_display)  # Show tool call like Lovable
     # Store for UI display
-    if hasattr(list_transcripts, '_current_tool_calls'):
-        list_transcripts._current_tool_calls.append(tool_call_display)
-    return list_func()
+    if hasattr(browse_transcripts, '_current_tool_calls'):
+        browse_transcripts._current_tool_calls.append(tool_call_display)
+    return browse_func()
 
 @tool  
-def read_transcript(filename: str, start_time: float = None, end_time: float = None) -> str:
-    """Read transcript content by name or topic. Automatically finds matching files using smart search. Use when user asks about any transcript content (e.g., 'chuck', 'gang reporter', 'pharma', or exact filenames)."""
+def read_transcript_text(filename: str, start_time: float = None, end_time: float = None) -> str:
+    """Read transcript as formatted text for content review and analysis. 
+    Auto-finds files by name/topic. Returns human-readable conversation format 
+    with speaker names and approximate timestamps. Best for brainstorming and quotes."""
     # Clean up filename for display
     clean_name = filename.replace('.json', '').replace('_', ' ').replace('-', ' ')
-    tool_call_display = f"🗂️ read_transcript ({clean_name})"
-    print(f"🗂️ read_transcript({filename})")  # Show full filename in terminal
+    tool_call_display = f"🗂️ read_transcript_text ({clean_name})"
+    print(f"🗂️ read_transcript_text({filename})")  # Show full filename in terminal
     # Store for UI display
-    if hasattr(read_transcript, '_current_tool_calls'):
-        read_transcript._current_tool_calls.append(tool_call_display)
-    return read_func(filename, start_time, end_time)
+    if hasattr(read_transcript_text, '_current_tool_calls'):
+        read_transcript_text._current_tool_calls.append(tool_call_display)
+    return read_text_func(filename, start_time, end_time)
+
+@tool  
+def read_transcript_json(filename: str, start_time: float = None, end_time: float = None) -> str:
+    """Read transcript as JSON with word-level timecodes (millisecond precision).
+    Returns complete data structure needed for video editing and precise clips.
+    Note: Uses more tokens due to complete timing data for every word."""
+    # Clean up filename for display  
+    clean_name = filename.replace('.json', '').replace('_', ' ').replace('-', ' ')
+    tool_call_display = f"🔬 read_transcript_json ({clean_name})"
+    print(f"🔬 read_transcript_json({filename})")  # Different icon for experimental
+    # Store for UI display
+    if hasattr(read_transcript_json, '_current_tool_calls'):
+        read_transcript_json._current_tool_calls.append(tool_call_display)
+    return read_json_func(filename, start_time, end_time)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -96,7 +113,7 @@ async def startup_event():
         max_retries=2     # Add retry logic for better reliability
     )
     
-    tools = [list_transcripts, read_transcript]
+    tools = [browse_transcripts, read_transcript_text, read_transcript_json]
     memory = MemorySaver()
     
     agent = create_react_agent(
@@ -134,8 +151,9 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         tool_calls = []
         
         # Initialize tool call collection
-        list_transcripts._current_tool_calls = []
-        read_transcript._current_tool_calls = []
+        browse_transcripts._current_tool_calls = []
+        read_transcript_text._current_tool_calls = []
+        read_transcript_json._current_tool_calls = []
         
         async for event in agent.astream({
             "messages": [{"role": "user", "content": request.message}]
@@ -160,8 +178,9 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         
         # Collect all tool calls from the functions
         all_tool_calls = []
-        all_tool_calls.extend(list_transcripts._current_tool_calls)
-        all_tool_calls.extend(read_transcript._current_tool_calls)
+        all_tool_calls.extend(browse_transcripts._current_tool_calls)
+        all_tool_calls.extend(read_transcript_text._current_tool_calls)
+        all_tool_calls.extend(read_transcript_json._current_tool_calls)
         
         # Calculate metrics
         end_time = time.time()
@@ -190,7 +209,7 @@ async def get_available_transcripts() -> Dict[str, Any]:
     Optional endpoint to let ChatCut know what transcripts are available
     """
     try:
-        transcript_list = list_func()
+        transcript_list = browse_func()
         return {
             "transcripts": transcript_list,
             "status": "success"

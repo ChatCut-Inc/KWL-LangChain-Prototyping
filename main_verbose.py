@@ -11,22 +11,33 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.tools import tool
-from tools.transcript_tools import list_transcripts as list_func, read_transcript as read_func
+from tools import browse_transcripts as browse_func, read_transcript_text as read_text_func, read_transcript_json as read_json_func
 
 load_dotenv()
 
 # Wrap functions as proper LangChain tools
 @tool
-def list_transcripts() -> str:
-    """List all available transcript files with metadata. Use when user asks what transcripts are available."""
-    print("🗂️ list_transcripts")  # Show tool call like Lovable
-    return list_func()
+def browse_transcripts() -> str:
+    """List all available transcripts with metadata. Shows title, duration, and speakers 
+    for each transcript file."""
+    print("🗂️ browse_transcripts")  # Show tool call like Lovable
+    return browse_func()
 
 @tool  
-def read_transcript(filename: str, start_time: float = None, end_time: float = None) -> str:
-    """Read specific transcript file content. Use when user asks about transcript content or wants to know what someone said."""
-    print(f"🗂️ read_transcript({filename})")  # Show tool call like Lovable
-    return read_func(filename, start_time, end_time)
+def read_transcript_text(filename: str, start_time: float = None, end_time: float = None) -> str:
+    """Read transcript as formatted text for content review and analysis. 
+    Auto-finds files by name/topic. Returns human-readable conversation format 
+    with speaker names and approximate timestamps. Best for brainstorming and quotes."""
+    print(f"🗂️ read_transcript_text({filename})")  # Show tool call like Lovable
+    return read_text_func(filename, start_time, end_time)
+
+@tool  
+def read_transcript_json(filename: str, start_time: float = None, end_time: float = None) -> str:
+    """Read transcript as JSON with word-level timecodes (millisecond precision).
+    Returns complete data structure needed for video editing and precise clips.
+    Note: Uses more tokens due to complete timing data for every word."""
+    print(f"🔬 read_transcript_json({filename})")  # Show tool call like Lovable
+    return read_json_func(filename, start_time, end_time)
 
 async def main():
     print("🎬 Video Transcript Analyzer (Verbose Mode + Monitoring)")
@@ -50,7 +61,7 @@ async def main():
         max_retries=2     # Add retry logic for better reliability
     )
     
-    tools = [list_transcripts, read_transcript]
+    tools = [browse_transcripts, read_transcript_text, read_transcript_json]
     memory = MemorySaver()
     
     agent = create_react_agent(
