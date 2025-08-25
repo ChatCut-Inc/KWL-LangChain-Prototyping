@@ -18,7 +18,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.tools import tool
-from tools import browse_transcripts as browse_func, read_transcript_text as read_text_func, read_transcript_json as read_json_func
+from tools import browse_transcripts as browse_func, read_transcript_text as read_text_func, read_transcript_json as read_json_func, search_transcript_content as search_func
 
 load_dotenv()
 
@@ -61,6 +61,18 @@ def read_transcript_json(filename: str, start_time: float = None, end_time: floa
     if hasattr(read_transcript_json, '_current_tool_calls'):
         read_transcript_json._current_tool_calls.append(tool_call_display)
     return read_json_func(filename, start_time, end_time)
+
+@tool
+def search_transcript_content(query: str, limit: int = 10) -> str:
+    """Search for specific words or phrases across all transcripts using fast BM25 keyword search.
+    Finds exact lines containing the search terms without reading every file.
+    Use when user asks to find specific content like 'find all mentions of climate change'."""
+    tool_call_display = f"🔍 search_transcript_content ('{query}')"
+    print(f"🔍 search_transcript_content('{query}')")
+    # Store for UI display
+    if hasattr(search_transcript_content, '_current_tool_calls'):
+        search_transcript_content._current_tool_calls.append(tool_call_display)
+    return search_func(query, limit)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -113,7 +125,7 @@ async def startup_event():
         max_retries=2     # Add retry logic for better reliability
     )
     
-    tools = [browse_transcripts, read_transcript_text, read_transcript_json]
+    tools = [browse_transcripts, read_transcript_text, read_transcript_json, search_transcript_content]
     memory = MemorySaver()
     
     agent = create_react_agent(
@@ -154,6 +166,7 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         browse_transcripts._current_tool_calls = []
         read_transcript_text._current_tool_calls = []
         read_transcript_json._current_tool_calls = []
+        search_transcript_content._current_tool_calls = []
         
         async for event in agent.astream({
             "messages": [{"role": "user", "content": request.message}]
@@ -181,6 +194,7 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         all_tool_calls.extend(browse_transcripts._current_tool_calls)
         all_tool_calls.extend(read_transcript_text._current_tool_calls)
         all_tool_calls.extend(read_transcript_json._current_tool_calls)
+        all_tool_calls.extend(search_transcript_content._current_tool_calls)
         
         # Calculate metrics
         end_time = time.time()

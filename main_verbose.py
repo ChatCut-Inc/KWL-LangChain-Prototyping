@@ -11,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.tools import tool
-from tools import browse_transcripts as browse_func, read_transcript_text as read_text_func, read_transcript_json as read_json_func
+from tools import browse_transcripts as browse_func, read_transcript_text as read_text_func, read_transcript_json as read_json_func, search_transcript_content as search_func
 
 load_dotenv()
 
@@ -39,6 +39,14 @@ def read_transcript_json(filename: str, start_time: float = None, end_time: floa
     print(f"🔬 read_transcript_json({filename})")  # Show tool call like Lovable
     return read_json_func(filename, start_time, end_time)
 
+@tool
+def search_transcript_content(query: str, limit: int = 10) -> str:
+    """Search for specific words or phrases across all transcripts using fast BM25 keyword search.
+    Finds exact lines containing the search terms without reading every file.
+    Use when user asks to find specific content like 'find all mentions of climate change'."""
+    print(f"🔍 search_transcript_content('{query}')")
+    return search_func(query, limit)
+
 async def main():
     print("🎬 Video Transcript Analyzer (Verbose Mode + Monitoring)")
     print("=" * 50)
@@ -61,7 +69,7 @@ async def main():
         max_retries=2     # Add retry logic for better reliability
     )
     
-    tools = [browse_transcripts, read_transcript_text, read_transcript_json]
+    tools = [browse_transcripts, read_transcript_text, read_transcript_json, search_transcript_content]
     memory = MemorySaver()
     
     agent = create_react_agent(
