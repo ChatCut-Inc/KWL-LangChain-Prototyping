@@ -46,8 +46,8 @@ def browse_transcripts() -> str:
         # Count unique speakers
         speakers = set()
         for segment in segments:
-            if segment.get('speaker'):
-                speakers.add(segment['speaker'])
+            if segment.get('speaker_id'):
+                speakers.add(segment['speaker_id'])
         
         result += f"📄 {media_name}: ({duration_s:.0f}s, {len(speakers)} speakers)\n"
     
@@ -82,8 +82,8 @@ def read_transcript_text(filename: str, start_time: float = None, end_time: floa
     if start_time is not None or end_time is not None:
         filtered_segments = []
         for segment in segments:
-            segment_start = segment.get('start', 0) / 1000.0  # Convert ms to seconds
-            segment_end = segment.get('end', 0) / 1000.0
+            segment_start = segment.get('start_ms', 0) / 1000.0  # Convert ms to seconds
+            segment_end = segment.get('end_ms', 0) / 1000.0
             
             # Include segment if it overlaps with requested time range
             if start_time is not None and segment_end < start_time:
@@ -102,9 +102,9 @@ def read_transcript_text(filename: str, start_time: float = None, end_time: floa
     
     current_speaker = None
     for segment in segments:
-        speaker = segment.get('speaker', 'Unknown Speaker')
+        speaker = segment.get('speaker_id', 'Unknown Speaker')
         text = segment.get('text', '').strip()
-        start_ms = segment.get('start', 0)
+        start_ms = segment.get('start_ms', 0)
         
         if not text:
             continue
@@ -158,8 +158,8 @@ def read_transcript_json(filename: str, start_time: float = None, end_time: floa
         filtered_segments = []
         
         for segment in segments:
-            segment_start = segment.get('start', 0) / 1000.0  # Convert ms to seconds
-            segment_end = segment.get('end', 0) / 1000.0
+            segment_start = segment.get('start_ms', 0) / 1000.0  # Convert ms to seconds
+            segment_end = segment.get('end_ms', 0) / 1000.0
             
             # Include segment if it overlaps with requested time range
             if start_time is not None and segment_end < start_time:
@@ -205,13 +205,13 @@ def search_transcript_content(query: str, limit: int = 10) -> str:
                 
             # Simple case-insensitive search
             if query_lower in text.lower():
-                start_ms = segment.get('start', 0)
+                start_ms = segment.get('start_ms', 0)
                 start_seconds = start_ms // 1000
                 minutes = start_seconds // 60
                 seconds = start_seconds % 60
                 timestamp = f"{minutes:02d}:{seconds:02d}"
                 
-                speaker = segment.get('speaker', 'Unknown Speaker')
+                speaker = segment.get('speaker_id', 'Unknown Speaker')
                 
                 search_results.append({
                     'media_name': media_name,
@@ -339,6 +339,16 @@ async def analyze_transcript_stream(request: ChatRequest):
             global current_transcripts
             current_transcripts = request.transcripts
             print(f"📊 Received {len(current_transcripts)} transcripts from ChatCut")
+            
+            # Debug: Log speaker data in first transcript segment
+            if current_transcripts and len(current_transcripts) > 0:
+                first_transcript = current_transcripts[0]
+                segments = first_transcript.get('segments', [])
+                if segments and len(segments) > 0:
+                    first_segment = segments[0]
+                    print(f"🔍 DEBUG - First segment speaker_id: {first_segment.get('speaker_id', 'MISSING')}")
+                    print(f"🔍 DEBUG - First segment keys: {list(first_segment.keys())}")
+                    print(f"🔍 DEBUG - First segment text: {first_segment.get('text', '')[:50]}...")
             
             # Use persistent thread for web sessions
             thread_config = {"configurable": {"thread_id": "chatcut-web-session"}}
