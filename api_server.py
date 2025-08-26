@@ -30,7 +30,28 @@ def browse_transcripts() -> str:
     """List all available transcripts with metadata. Shows title, duration, and speakers 
     for each transcript file."""
     print("browse_transcripts")  # Clean log output
-    return browse_func()
+    
+    # Use ChatCut transcript data instead of local files
+    if not current_transcripts:
+        return "No transcript files found in ChatCut media panel. Please add transcripts to your project and enable 'Send to AI'."
+    
+    result = "Available transcript files:\n"
+    for i, transcript in enumerate(current_transcripts):
+        # Extract metadata from ChatCut transcript format
+        media_name = transcript.get('mediaLibraryItemName', f'Transcript {i+1}')
+        duration_ms = transcript.get('durationMs', 0)
+        duration_s = duration_ms / 1000.0 if duration_ms else 0
+        segments = transcript.get('segments', [])
+        
+        # Count unique speakers
+        speakers = set()
+        for segment in segments:
+            if segment.get('speaker'):
+                speakers.add(segment['speaker'])
+        
+        result += f"📄 {media_name}: ({duration_s:.0f}s, {len(speakers)} speakers)\n"
+    
+    return result.strip()
 
 @tool  
 def read_transcript_text(filename: str, start_time: float = None, end_time: float = None) -> str:
@@ -38,7 +59,74 @@ def read_transcript_text(filename: str, start_time: float = None, end_time: floa
     Auto-finds files by name/topic. Returns human-readable conversation format 
     with speaker names and approximate timestamps. Best for brainstorming and quotes."""
     print(f"read_transcript_text({filename})")  # Clean log output
-    return read_text_func(filename, start_time, end_time)
+    
+    # Find transcript in ChatCut data by name matching
+    target_transcript = None
+    for transcript in current_transcripts:
+        media_name = transcript.get('mediaLibraryItemName', '')
+        if filename.lower() in media_name.lower() or media_name.lower() in filename.lower():
+            target_transcript = transcript
+            break
+    
+    if not target_transcript:
+        # List available transcripts for error message
+        available_names = [t.get('mediaLibraryItemName', f'Transcript {i+1}') 
+                          for i, t in enumerate(current_transcripts)]
+        return f"No transcript found matching '{filename}'. Available: {', '.join(available_names)}"
+    
+    # Convert ChatCut transcript format to readable text
+    segments = target_transcript.get('segments', [])
+    media_name = target_transcript.get('mediaLibraryItemName', 'Transcript')
+    
+    # Apply time filtering if specified
+    if start_time is not None or end_time is not None:
+        filtered_segments = []
+        for segment in segments:
+            segment_start = segment.get('start', 0) / 1000.0  # Convert ms to seconds
+            segment_end = segment.get('end', 0) / 1000.0
+            
+            # Include segment if it overlaps with requested time range
+            if start_time is not None and segment_end < start_time:
+                continue
+            if end_time is not None and segment_start > end_time:
+                continue
+                
+            filtered_segments.append(segment)
+        segments = filtered_segments
+    
+    if not segments:
+        return f"No content found in the specified time range for {media_name}."
+    
+    # Format as readable conversation
+    result = f"=== {media_name} ===\n\n"
+    
+    current_speaker = None
+    for segment in segments:
+        speaker = segment.get('speaker', 'Unknown Speaker')
+        text = segment.get('text', '').strip()
+        start_ms = segment.get('start', 0)
+        
+        if not text:
+            continue
+            
+        # Convert milliseconds to MM:SS format
+        start_seconds = start_ms // 1000
+        minutes = start_seconds // 60
+        seconds = start_seconds % 60
+        timestamp = f"{minutes:02d}:{seconds:02d}"
+        
+        # Group consecutive segments from same speaker
+        if speaker != current_speaker:
+            if current_speaker is not None:
+                result += "\n\n"  # Add spacing between speakers
+            result += f"**{speaker}** [{timestamp}]: "
+            current_speaker = speaker
+        else:
+            result += " "  # Continue same speaker's text
+        
+        result += text
+    
+    return result
 
 @tool  
 def read_transcript_json(filename: str, start_time: float = None, end_time: float = None) -> str:
@@ -46,7 +134,51 @@ def read_transcript_json(filename: str, start_time: float = None, end_time: floa
     Returns complete data structure needed for video editing and precise clips.
     Note: Uses more tokens due to complete timing data for every word."""
     print(f"read_transcript_json({filename})")  # Clean log output
-    return read_json_func(filename, start_time, end_time)
+    
+    # Find transcript in ChatCut data by name matching
+    target_transcript = None
+    for transcript in current_transcripts:
+        media_name = transcript.get('mediaLibraryItemName', '')
+        if filename.lower() in media_name.lower() or media_name.lower() in filename.lower():
+            target_transcript = transcript
+            break
+    
+    if not target_transcript:
+        # List available transcripts for error message
+        available_names = [t.get('mediaLibraryItemName', f'Transcript {i+1}') 
+                          for i, t in enumerate(current_transcripts)]
+        return f"No transcript found matching '{filename}'. Available: {', '.join(available_names)}"
+    
+    # Apply time filtering if specified
+    filtered_transcript = dict(target_transcript)  # Copy transcript data
+    
+    if start_time is not None or end_time is not None:
+        # Filter segments by time range
+        segments = filtered_transcript.get('segments', [])
+        filtered_segments = []
+        
+        for segment in segments:
+            segment_start = segment.get('start', 0) / 1000.0  # Convert ms to seconds
+            segment_end = segment.get('end', 0) / 1000.0
+            
+            # Include segment if it overlaps with requested time range
+            if start_time is not None and segment_end < start_time:
+                continue
+            if end_time is not None and segment_start > end_time:
+                continue
+                
+            filtered_segments.append(segment)
+        
+        filtered_transcript['segments'] = filtered_segments
+        filtered_transcript['_time_filter'] = {
+            'start_time': start_time,
+            'end_time': end_time,
+            'original_segments': len(segments),
+            'filtered_segments': len(filtered_segments)
+        }
+    
+    import json
+    return json.dumps(filtered_transcript, indent=2)
 
 @tool
 def search_transcript_content(query: str, limit: int = 10) -> str:
@@ -54,7 +186,68 @@ def search_transcript_content(query: str, limit: int = 10) -> str:
     Finds exact lines containing the search terms without reading every file.
     Use when user asks to find specific content like 'find all mentions of climate change'."""
     print(f"search_transcript_content('{query}')")  # Clean log output
-    return search_func(query, limit)
+    
+    if not current_transcripts:
+        return "No transcripts available to search."
+    
+    # Search across all ChatCut transcript data
+    search_results = []
+    query_lower = query.lower()
+    
+    for transcript in current_transcripts:
+        media_name = transcript.get('mediaLibraryItemName', 'Unknown')
+        segments = transcript.get('segments', [])
+        
+        for segment in segments:
+            text = segment.get('text', '').strip()
+            if not text:
+                continue
+                
+            # Simple case-insensitive search
+            if query_lower in text.lower():
+                start_ms = segment.get('start', 0)
+                start_seconds = start_ms // 1000
+                minutes = start_seconds // 60
+                seconds = start_seconds % 60
+                timestamp = f"{minutes:02d}:{seconds:02d}"
+                
+                speaker = segment.get('speaker', 'Unknown Speaker')
+                
+                search_results.append({
+                    'media_name': media_name,
+                    'timestamp': timestamp,
+                    'speaker': speaker,
+                    'text': text,
+                    'start_ms': start_ms
+                })
+    
+    if not search_results:
+        return f"No matches found for '{query}' in any transcript."
+    
+    # Sort by media name then timestamp
+    search_results.sort(key=lambda x: (x['media_name'], x['start_ms']))
+    
+    # Limit results
+    if len(search_results) > limit:
+        search_results = search_results[:limit]
+    
+    # Format results
+    result = f"Found {len(search_results)} matches for '{query}':\n\n"
+    
+    current_media = None
+    for match in search_results:
+        if match['media_name'] != current_media:
+            if current_media is not None:
+                result += "\n"
+            result += f"=== {match['media_name']} ===\n"
+            current_media = match['media_name']
+        
+        result += f"[{match['timestamp']}] **{match['speaker']}**: {match['text']}\n"
+    
+    if len(search_results) >= limit:
+        result += f"\n... (showing first {limit} results)"
+    
+    return result
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -75,6 +268,8 @@ app.add_middleware(
 # Request/Response models
 class ChatRequest(BaseModel):
     message: str
+    context: dict = {}
+    transcripts: list = []
 
 class ChatResponse(BaseModel):
     text: str
@@ -86,6 +281,9 @@ class ChatResponse(BaseModel):
 # Global agent (initialized on startup)
 agent = None
 memory = None
+
+# Global transcript data storage
+current_transcripts = []
 
 @app.on_event("startup")
 async def startup_event():
@@ -137,60 +335,71 @@ async def analyze_transcript_stream(request: ChatRequest):
             print(f"\n💬 Streaming: {request.message}")
             start_time = time.time()
             
+            # Store transcript data globally for tools to access
+            global current_transcripts
+            current_transcripts = request.transcripts
+            print(f"📊 Received {len(current_transcripts)} transcripts from ChatCut")
+            
             # Use persistent thread for web sessions
             thread_config = {"configurable": {"thread_id": "chatcut-web-session"}}
             
             full_response = ""
             total_tokens = 0
             
-            # Stream events from LangGraph agent
-            async for event in agent.astream({
+            # Stream events from LangGraph agent using astream_events for tool detection
+            async for event in agent.astream_events({
                 "messages": [{"role": "user", "content": request.message}]
-            }, config=thread_config):
+            }, config=thread_config, version="v2"):
                 
-                if isinstance(event, dict):
-                    # Handle different LangGraph event types
-                    for node_name, node_data in event.items():
-                        
-                        # Agent messages (includes tool calls)
-                        if node_name == "agent" and isinstance(node_data, dict):
-                            if "messages" in node_data:
-                                messages = node_data["messages"]
-                                if messages:
-                                    latest_msg = messages[-1]
-                                    
-                                    # Check for tool calls in agent messages
-                                    if hasattr(latest_msg, 'tool_calls') and latest_msg.tool_calls:
-                                        for tool_call in latest_msg.tool_calls:
-                                            tool_name = tool_call.get('name', 'unknown_tool')
-                                            tool_args = tool_call.get('args', {})
-                                            yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name, 'args': tool_args})}\n\n"
-                                    
-                                    # Handle text content
-                                    if hasattr(latest_msg, 'content') and latest_msg.content:
-                                        # Check if this is new content to stream
-                                        new_content = latest_msg.content
-                                        if new_content != full_response:
-                                            if full_response and new_content.startswith(full_response):
-                                                # Stream just the new part
-                                                new_part = new_content[len(full_response):]
-                                                yield f"data: {json.dumps({'type': 'text_chunk', 'content': new_part})}\n\n"
-                                            else:
-                                                # Stream full content if it's different
-                                                yield f"data: {json.dumps({'type': 'text_chunk', 'content': new_content})}\n\n"
-                                            full_response = new_content
-                                        
-                                        # Extract token usage if available
-                                        if hasattr(latest_msg, 'usage_metadata'):
-                                            usage = latest_msg.usage_metadata
-                                            total_tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
-                        
-                        # Tool execution results
-                        elif node_name == "tools" and isinstance(node_data, dict):
-                            if "messages" in node_data:
-                                for message in node_data["messages"]:
-                                    if hasattr(message, 'content'):  # Tool result
-                                        yield f"data: {json.dumps({'type': 'tool_end', 'tool': 'completed', 'status': 'success'})}\n\n"
+                if not isinstance(event, dict):
+                    continue
+                    
+                event_type = event.get("event")
+                event_name = event.get("name", "")
+                event_data = event.get("data", {})
+                
+                # Send tool immediately when it completes - chronological order
+                if event_type == "on_tool_end":
+                    # Extract filename from tool input if available
+                    tool_input = event_data.get("input", {})
+                    filename = None
+                    
+                    if isinstance(tool_input, dict) and tool_input.get("filename"):
+                        filename = tool_input["filename"]
+                    elif isinstance(tool_input, str) and "filename" in tool_input:
+                        # Handle string input that might contain filename
+                        import re
+                        match = re.search(r'filename[\'"]?\s*[:=]\s*[\'"]?([^\'",\s}]+)', tool_input)
+                        if match:
+                            filename = match.group(1)
+                    
+                    # Send tool immediately in chronological order
+                    tool_data = [{
+                        "toolName": event_name,
+                        "filename": filename,
+                        "status": "completed"
+                    }]
+                    tool_calls_json = json.dumps(tool_data)
+                    tool_content = f"[AGENT_V3_TOOLS]{tool_calls_json}[/AGENT_V3_TOOLS]\n\n"
+                    
+                    yield f"data: {json.dumps({'type': 'text_chunk', 'content': tool_content})}\n\n"
+                    print(f"✅ Tool completed: {event_name}")
+                
+                # Stream text chunks immediately - no buffering needed
+                elif event_type == "on_chat_model_stream":
+                    chunk_data = event_data.get("chunk", {})
+                    content = getattr(chunk_data, 'content', None) or ""
+                    
+                    if content:
+                        yield f"data: {json.dumps({'type': 'text_chunk', 'content': content})}\n\n"
+                        full_response += content
+                
+                # Extract token usage from chat model completion
+                elif event_type == "on_chat_model_end":
+                    # Extract token usage if available
+                    usage_metadata = event_data.get("usage_metadata")
+                    if usage_metadata:
+                        total_tokens = usage_metadata.get('input_tokens', 0) + usage_metadata.get('output_tokens', 0)
             
             # Calculate final metrics
             end_time = time.time()
@@ -230,6 +439,11 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         print(f"\n💬 Received: {request.message}")
         start_time = time.time()
         
+        # Store transcript data globally for tools to access
+        global current_transcripts
+        current_transcripts = request.transcripts
+        print(f"📊 Received {len(current_transcripts)} transcripts from ChatCut")
+        
         # Use persistent thread for web sessions - maintains memory across requests
         thread_config = {"configurable": {"thread_id": "chatcut-web-session"}}
         
@@ -239,9 +453,9 @@ async def analyze_transcript(request: ChatRequest) -> ChatResponse:
         tool_calls = []
         
         
-        async for event in agent.astream({
+        async for event in agent.astream_events({
             "messages": [{"role": "user", "content": request.message}]
-        }, config=thread_config):
+        }, config=thread_config, version="v2"):
             
             # Handle LangGraph event structure (same logic as main_verbose.py)
             if isinstance(event, dict):
