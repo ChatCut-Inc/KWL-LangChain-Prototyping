@@ -39,17 +39,23 @@ def browse_transcripts() -> str:
     for i, transcript in enumerate(current_transcripts):
         # Extract metadata from ChatCut transcript format
         media_name = transcript.get('mediaLibraryItemName', f'Transcript {i+1}')
-        duration_ms = transcript.get('durationMs', 0)
+        duration_ms = transcript.get('duration_ms', 0)  # Use correct field name from ChatCut
         duration_s = duration_ms / 1000.0 if duration_ms else 0
         segments = transcript.get('segments', [])
         
-        # Count unique speakers
-        speakers = set()
-        for segment in segments:
-            if segment.get('speaker_id'):
-                speakers.add(segment['speaker_id'])
-        
-        result += f"📄 {media_name}: ({duration_s:.0f}s, {len(speakers)} speakers)\n"
+        # Extract speaker names from transcript data
+        speaker_info = transcript.get('speakers', [])
+        if speaker_info:
+            speaker_names = [speaker.get('name', f"Speaker {speaker.get('id', '?')}") for speaker in speaker_info]
+            speaker_list = ', '.join(speaker_names)
+            result += f"📄 {media_name}: ({duration_s:.0f}s, speakers: {speaker_list})\n"
+        else:
+            # Fallback: count unique speakers by ID
+            speakers = set()
+            for segment in segments:
+                if segment.get('speaker_id'):
+                    speakers.add(segment['speaker_id'])
+            result += f"📄 {media_name}: ({duration_s:.0f}s, {len(speakers)} speakers)\n"
     
     return result.strip()
 
@@ -101,8 +107,11 @@ def read_transcript_text(filename: str, start_time: float = None, end_time: floa
     result = f"=== {media_name} ===\n\n"
     
     current_speaker = None
+    current_speaker_name = None
     for segment in segments:
-        speaker = segment.get('speaker_id', 'Unknown Speaker')
+        # Use human-readable speaker name if available, fallback to speaker_id
+        speaker_name = segment.get('speaker_name', segment.get('speaker_id', 'Unknown Speaker'))
+        speaker_id = segment.get('speaker_id', 'unknown')
         text = segment.get('text', '').strip()
         start_ms = segment.get('start_ms', 0)
         
@@ -115,12 +124,13 @@ def read_transcript_text(filename: str, start_time: float = None, end_time: floa
         seconds = start_seconds % 60
         timestamp = f"{minutes:02d}:{seconds:02d}"
         
-        # Group consecutive segments from same speaker
-        if speaker != current_speaker:
+        # Group consecutive segments from same speaker (use speaker_id for consistency)
+        if speaker_id != current_speaker:
             if current_speaker is not None:
                 result += "\n\n"  # Add spacing between speakers
-            result += f"**{speaker}** [{timestamp}]: "
-            current_speaker = speaker
+            result += f"**{speaker_name}** [{timestamp}]: "
+            current_speaker = speaker_id
+            current_speaker_name = speaker_name
         else:
             result += " "  # Continue same speaker's text
         
@@ -211,7 +221,8 @@ def search_transcript_content(query: str, limit: int = 10) -> str:
                 seconds = start_seconds % 60
                 timestamp = f"{minutes:02d}:{seconds:02d}"
                 
-                speaker = segment.get('speaker_id', 'Unknown Speaker')
+                # Use human-readable speaker name if available
+                speaker = segment.get('speaker_name', segment.get('speaker_id', 'Unknown Speaker'))
                 
                 search_results.append({
                     'media_name': media_name,
@@ -299,7 +310,7 @@ async def startup_event():
         raise ValueError("GOOGLE_API_KEY not found in environment variables")
     
     model = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-pro",  # Latest stable Gemini 2.5 Pro model 
         google_api_key=api_key,
         temperature=1.0,  # Google's 2025 recommendation for better reasoning
         max_retries=2     # Add retry logic for better reliability
@@ -340,14 +351,26 @@ async def analyze_transcript_stream(request: ChatRequest):
             current_transcripts = request.transcripts
             print(f"📊 Received {len(current_transcripts)} transcripts from ChatCut")
             
-            # Debug: Log speaker data in first transcript segment
+            # Debug: Log full transcript structure to identify missing fields
             if current_transcripts and len(current_transcripts) > 0:
                 first_transcript = current_transcripts[0]
+                print(f"🔍 DEBUG - FULL TRANSCRIPT STRUCTURE:")
+                print(f"🔍 DEBUG - First transcript keys: {list(first_transcript.keys())}")
+                print(f"🔍 DEBUG - Complete first transcript: {first_transcript}")
+                print(f"🔍 DEBUG - Duration fields audit:")
+                print(f"    - duration_ms: {first_transcript.get('duration_ms', 'MISSING')}")
+                print(f"    - durationMs: {first_transcript.get('durationMs', 'MISSING')}")  
+                print(f"    - title: {first_transcript.get('title', 'MISSING')}")
+                print(f"    - mediaLibraryItemName: {first_transcript.get('mediaLibraryItemName', 'MISSING')}")
+                print(f"    - mediaLibraryItemId: {first_transcript.get('mediaLibraryItemId', 'MISSING')}")
+                print(f"    - id: {first_transcript.get('id', 'MISSING')}")
+                print(f"    - speakers: {first_transcript.get('speakers', 'MISSING')}")
+                
                 segments = first_transcript.get('segments', [])
                 if segments and len(segments) > 0:
                     first_segment = segments[0]
-                    print(f"🔍 DEBUG - First segment speaker_id: {first_segment.get('speaker_id', 'MISSING')}")
                     print(f"🔍 DEBUG - First segment keys: {list(first_segment.keys())}")
+                    print(f"🔍 DEBUG - First segment structure: {first_segment}")
                     print(f"🔍 DEBUG - First segment text: {first_segment.get('text', '')[:50]}...")
             
             # Use persistent thread for web sessions

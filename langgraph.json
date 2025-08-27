@@ -1,0 +1,16 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "transcript_agent": {
+      "path": "graph:create_agent_graph",
+      "description": "Transcript analysis agent with ChatCut integration"
+    }
+  },
+  "env": ".env",
+  "python_version": "3.13",
+  "pip_config": {
+    "index_url": "https://pypi.org/simple/"
+  }
+}
